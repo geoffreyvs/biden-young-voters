@@ -107,14 +107,11 @@ tab.widest <- tab.age %>%
 ```{r tab 18-29s with loess fit on ggplot for comparison}
 
 tab.young_long <- tab.widest %>%
-  filter(subpopulation == "18_29" | subpopulation == "18_34") %>%
+  filter(subpopulation == "18_29") %>%
   dplyr::select(poll_id, question_id, display_name, end_date, pres.day, sample_size, population, subpopulation, population_full, yes, no, alternate_answers) %>%
   gather(answer, perc, yes:alternate_answers)
 
-tab.young_long18_29 <- tab.young_long %>%
-  filter(subpopulation == "18_29")
-
-chart.young18_29 <- ggplot(tab.young_long18_29, aes(x = end_date, y = perc, group = answer, color = answer, weight = sample_size)) +
+chart.young18_29 <- ggplot(tab.young_long, aes(x = end_date, y = perc, group = answer, color = answer, weight = sample_size)) +
   geom_point() +
   geom_smooth(method = "loess", se = FALSE, span = .75)  +
   ggtitle("Approval/Disapproval among 18-29s")
@@ -127,7 +124,7 @@ chart.young18_29
 ```{r loess output}
 
 #18-29 approval
-tab.18_29.app <- tab.young_long18_29 %>%
+tab.18_29.app <- tab.young_long %>%
   filter(answer == "yes")
 
 tab.18_29.app.dates <- tab.18_29.app %>%
@@ -141,7 +138,7 @@ tab.18_29.app.pred <- as.data.frame(predict(tab.18_29.loess, se = TRUE))
 tab.18_29.app.fit <- bind_cols(tab.18_29.app.dates, tab.18_29.app.pred)
 
 #18-29 disapproval
-tab.18_29.dis <- tab.young_long18_29 %>%
+tab.18_29.dis <- tab.young_long %>%
   filter(answer == "no")
 
 tab.18_29.dis.dates <- tab.18_29.dis %>%
@@ -155,7 +152,7 @@ tab.18_29.dis.pred <- as.data.frame(predict(tab.18_29.loess, se = TRUE))
 tab.18_29.dis.fit <- bind_cols(tab.18_29.dis.dates, tab.18_29.dis.pred)
 
 #18-29 DK/Not sure/Other
-tab.18_29.alt <- tab.young_long18_29 %>%
+tab.18_29.alt <- tab.young_long %>%
   filter(answer == "alternate_answers")
 
 tab.18_29.alt.dates <- tab.18_29.alt %>%
@@ -170,6 +167,8 @@ tab.18_29.alt.fit <- bind_cols(tab.18_29.alt.dates, tab.18_29.alt.pred)
 
 #all
 tab.18_29.fits <- bind_rows(tab.18_29.app.fit, tab.18_29.dis.fit, tab.18_29.alt.fit)
+
+write.csv(tab.18_29.fits, "Biden_appproval_fits.csv")
 
 fit.chart.approve <- ggplot(tab.18_29.fits, aes(x = end_date, y = fit, group = answer, color = answer)) +
   geom_point() +
