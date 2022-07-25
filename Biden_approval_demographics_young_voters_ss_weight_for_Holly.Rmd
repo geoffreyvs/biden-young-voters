@@ -1,0 +1,179 @@
+---
+title: "Biden approval by demographic groups"
+author: "Geoffrey Skelley"
+date: "7/19/2022"
+output: html_document
+---
+
+```{r setup, include = FALSE, warning = FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+setwd("/Users/skelg001/Documents/FiveThirtyEight/2022-07-14_BIDEN-APPROVAL")
+options(scipen=999)
+```
+
+```{r libraries, message = FALSE, warning = FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(tidylog)
+
+```
+
+#Demographics 
+```{r race data}
+
+tab.tabs <- read.csv("skelley.BIDEN-YOUNG-VOTERS.0727 - app_crosstab_through20220725.csv", stringsAsFactors = FALSE) %>%
+  #remove Kamala Harris observations
+  filter(politician != "Kamala Harris") #this removes rv-d, rv-i, rv-r observations for three polls: two by Redfield & Wilton (poll_id 76629, 76922) & Beacon Research/Shaw & Company Research (poll_id 76909)
+
+#lubridate to fix end dates
+tab.tabs$end_date <- mdy(tab.tabs$end_date)
+
+#add in Harvard Youth polls
+tab.harvard <- read.csv("skelley.BIDEN-YOUNG-VOTERS.0727 - harvard_youth.csv", stringsAsFactors = FALSE)
+
+#lubridate to fix end dates for Harvard polls
+tab.harvard$end_date <- mdy(tab.harvard$end_date)
+
+#Add date of Biden's presidency for calculating fit lines for possible DW version of chart
+tab.dates <- read.csv("skelley.BIDEN-APPROVAL.0714 (2 of 2) - biden_dates.csv", stringsAsFactors = FALSE) %>%
+  rename(end_date = modeldate)
+
+#lubridate to fix dates 
+tab.dates$end_date <- mdy(tab.dates$end_date)
+
+#combine crosstab data with Harvard crosstab data
+tab.tabs.hvd <- bind_rows(tab.tabs, tab.harvard)
+
+#combine all crosstab data with dates for fit line calculations
+tab.base <- left_join(tab.tabs.hvd, tab.dates) %>%
+  #create subpop and poll_id var
+  mutate(poll_id_subpop = paste(poll_id, subpopulation, sep = '_')) %>%
+  #add up approval and disapproval to check
+  mutate(tot.app.dis = yes + no) %>%
+  #create category to split age crosstabs from other types in the data
+  mutate(cat =  if_else(startsWith(subpopulation, "1"), "age",
+                if_else(startsWith(subpopulation, "2"), "age",
+                if_else(startsWith(subpopulation, "3"), "age",
+                if_else(startsWith(subpopulation, "4"), "age",
+                if_else(startsWith(subpopulation, "5"), "age",
+                if_else(startsWith(subpopulation, "6"), "age",
+                if_else(startsWith(subpopulation, "7"), "age", "other")))))))) %>%
+  filter(cat == "age") #just keep age crosstabs
+                                                 
+```
+
+```{r cps est population, split if includes sample size, determine heirarchies to remove duplicates and keep wider and narrower versions}
+#all approval polls
+app_polls <- read.csv("skelley.BIDEN-YOUNG-VOTERS.0727 - overall_approval_through20220725.csv", stringsAsFactors = FALSE) %>%
+  dplyr::select(poll_id, population, sample_size) %>%
+  rename(total_n = sample_size)
+
+#cps data
+cps <- read.csv("skelley.BIDEN-YOUNG-VOTERS.0727 - age_weight_est.csv")
+
+#combine poll and share of population data for weighting any data missing a sample size
+tab.base.polls <- left_join(tab.base, app_polls)
+tab.base.polls.cps <- left_join(tab.base.polls, cps)
+
+#data with NA for sample size
+tab.base.na <- tab.base.polls.cps %>%
+  filter(is.na(sample_size)) %>%
+  #estimated sample size to fill in NAs for age crosstabs with no sample size basd on census data per Mary's suggestions
+  mutate(sample_size = replace(sample_size, is.na(sample_size), cps_share*total_n))
+
+#data with listed sample sizes
+tab.base.ss <- tab.base.polls.cps %>%
+  filter(!is.na(sample_size))
+
+#bring data back together
+tab.age <- bind_rows(tab.base.ss, tab.base.na)
+
+#so include 
+tab.widest <- tab.age %>% 
+  mutate(population_hierarchy = if_else(population == "lv" , 3,
+                                if_else(population == "rv", 2,
+                                if_else(population == "a", 1, 9)))) %>%
+  group_by(poll_id_subpop) %>%
+  dplyr::mutate(n = n()) %>%
+  arrange(poll_id_subpop, population_hierarchy) %>%
+  slice(1)
+  #filter(population == "a") #IF we wanted to just use adult sample
+```
+
+```{r tab 18-29s with loess fit on ggplot for comparison}
+
+tab.young_long <- tab.widest %>%
+  filter(subpopulation == "18_29" | subpopulation == "18_34") %>%
+  dplyr::select(poll_id, question_id, display_name, end_date, pres.day, sample_size, population, subpopulation, population_full, yes, no, alternate_answers) %>%
+  gather(answer, perc, yes:alternate_answers)
+
+tab.young_long18_29 <- tab.young_long %>%
+  filter(subpopulation == "18_29")
+
+chart.young18_29 <- ggplot(tab.young_long18_29, aes(x = end_date, y = perc, group = answer, color = answer, weight = sample_size)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE, span = .75)  +
+  ggtitle("Approval/Disapproval among 18-29s")
+
+chart.young18_29
+
+```
+
+#fit lines 18-29 approval for DataWrapper
+```{r loess output}
+
+#18-29 approval
+tab.18_29.app <- tab.young_long18_29 %>%
+  filter(answer == "yes")
+
+tab.18_29.app.dates <- tab.18_29.app %>%
+  dplyr::select(end_date, pres.day, poll_id, display_name, sample_size, population, answer, perc)
+
+tab.18_29.loess <- loess(perc ~ pres.day, data = tab.18_29.app, weights = sample_size, span = .75)
+
+# get SE
+tab.18_29.app.pred <- as.data.frame(predict(tab.18_29.loess, se = TRUE))
+
+tab.18_29.app.fit <- bind_cols(tab.18_29.app.dates, tab.18_29.app.pred)
+
+#18-29 disapproval
+tab.18_29.dis <- tab.young_long18_29 %>%
+  filter(answer == "no")
+
+tab.18_29.dis.dates <- tab.18_29.dis %>%
+  dplyr::select(end_date, pres.day, poll_id, display_name, sample_size, population, answer, perc)
+
+tab.18_29.loess <- loess(perc ~ pres.day, data = tab.18_29.dis, weights = sample_size, span = .75)
+
+# get SE
+tab.18_29.dis.pred <- as.data.frame(predict(tab.18_29.loess, se = TRUE))
+
+tab.18_29.dis.fit <- bind_cols(tab.18_29.dis.dates, tab.18_29.dis.pred)
+
+#18-29 DK/Not sure/Other
+tab.18_29.alt <- tab.young_long18_29 %>%
+  filter(answer == "alternate_answers")
+
+tab.18_29.alt.dates <- tab.18_29.alt %>%
+  dplyr::select(end_date, pres.day, poll_id, display_name, sample_size, population, answer, perc)
+
+tab.18_29.loess <- loess(perc ~ pres.day, data = tab.18_29.alt, weights = sample_size, span = .75)
+
+# get SE
+tab.18_29.alt.pred <- as.data.frame(predict(tab.18_29.loess, se = TRUE))
+
+tab.18_29.alt.fit <- bind_cols(tab.18_29.alt.dates, tab.18_29.alt.pred)
+
+#all
+tab.18_29.fits <- bind_rows(tab.18_29.app.fit, tab.18_29.dis.fit, tab.18_29.alt.fit)
+
+fit.chart.approve <- ggplot(tab.18_29.fits, aes(x = end_date, y = fit, group = answer, color = answer)) +
+  geom_point() +
+  geom_line()
+
+fit.chart.approve
+```
